@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Population Density Viewer</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        #map { height: 100vh; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .control-group {
+            margin-bottom: 10px;
+        }
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select {
+            width: 100%;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .legend {
+            padding: 6px 8px;
+            background: white;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+            line-height: 18px;
+            color: #555;
+        }
+        .legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 8px;
+            opacity: 0.7;
+        }
+        .meeting-legend {
+            padding: 6px 8px;
+            background: white;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+            line-height: 18px;
+            color: #555;
+        }
+        .meeting-legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 8px;
+            border-radius: 50%;
+            opacity: 0.7;
+        }
+        .custom-marker-icon {
+            border: 2px solid white;
+            border-radius: 50%;
+            box-shadow: 0 0 3px rgba(0,0,0,0.5);
+        }
+        .radio-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+        .marker-option {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .marker-cluster {
+            background-color: rgba(50, 150, 255, 0.6);
+        }
+        .marker-cluster div {
+            background-color: rgba(0, 100, 255, 0.6);
+            color: white;
+            font-weight: bold;
+        }
+        #meeting-summary {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+            max-width: 300px;
+        }
+        #meeting-summary h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+        }
+        #meeting-stats {
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        .loading-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 15px 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+            display: none;
+        }
+        .loading-indicator.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+<div id="controls">
+    <div class="control-group">
+        <label for="state-select">State:</label>
+        <select id="state-select">
+            <option value="ma">Massachusetts</option>
+            <option value="nh">New Hampshire</option>
+            <option value="vt">Vermont</option>
+            <option value="me">Maine</option>
+            <option value="ct">Connecticut</option>
+            <option value="ri">Rhode Island</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label for="level-select">Level:</label>
+        <select id="level-select">
+            <option value="town">Town</option>
+            <option value="county">County</option>
+            <option value="tract">Tract</option>
+        </select>
+    </div>
+</div>
+
+<div id="map"></div>
+<div id="loading-indicator" class="loading-indicator">Loading meeting locations...</div>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+<script>
+    // Define state map centers
+    const stateCenters = {
+        ma: [42.4072, -71.3824],
+        nh: [43.6805, -71.5811],
+        vt: [44.0687, -72.6658],
+        me: [45.3695, -69.2428],
+        ct: [41.6219, -72.7273],
+        ri: [41.6762, -71.5562]
+    };
+
+    let currentState = 'ma';
+    let map = L.map('map').setView(stateCenters[currentState], 8);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+    // Active layers
+    let activeLayers = {};
+    let availableLayers = {}; // Keep track of which layers are available for current state
+    let meetingMarkers = null; // Store the meeting markers group
+
+    function getColor(d) {
+        return d > 10000 ? '#800026' :
+            d > 5000  ? '#BD0026' :
+                d > 2000  ? '#E31A1C' :
+                    d > 1000  ? '#FC4E2A' :
+                        d > 500   ? '#FD8D3C' :
+                            d > 200   ? '#FEB24C' :
+                                d > 100   ? '#FED976' :
+                                    '#FFEDA0';
+    }
+
+    function style(feature) {
+        return {
+            fillColor: getColor(feature.properties.density),
+            weight: 1,
+            opacity: 1,
+            color: 'white',
+            fillOpacity: 0.7
+        };
+    }
+
+    function createLayer(url, name) {
+        // Add cache-busting parameter
+        const cacheBustUrl = `${url}?_=${new Date().getTime()}`;
+        console.log(`Attempting to load: ${cacheBustUrl}`);
+        return fetch(cacheBustUrl)
+            .then(res => {
+                if (!res.ok) {
+                    console.error(`Failed to load ${cacheBustUrl}: ${res.status} ${res.statusText}`);
+                    throw new Error(`Failed to load ${cacheBustUrl}: ${res.status} ${res.statusText}`);
+                }
+                console.log(`Successfully loaded: ${cacheBustUrl}`);
+                return res.json();
+            })
+            .then(data => {
+                console.log(`Parsed JSON for ${cacheBustUrl}, features: ${data.features?.length || 'unknown'}`);
+                return L.geoJson(data, {
+                    style,
+                    onEachFeature: (feature, layer) => {
+                        const pop = feature.properties.population ?? 'N/A';
+                        const densityVal = feature.properties.density;
+                        const density = (densityVal != null) ? densityVal.toFixed(1) : 'N/A';
+
+                        // Create popup content with town name if available
+                        let popupContent = '';
+
+                        // Add town name for Massachusetts towns or any other data with a town field
+                        if (feature.properties.TOWN) {
+                            popupContent = `<strong>${feature.properties.TOWN}</strong><br>`;
+                        }
+
+                        // Add population and density
+                        popupContent += `<strong>Population:</strong> ${pop}<br><strong>Density:</strong> ${density} ppl/km²`;
+
+                        layer.bindPopup(popupContent);
+
+                        // Add hover effect
+                        layer.on({
+                            mouseover: function(e) {
+                                const layer = e.target;
+                                layer.setStyle({
+                                    weight: 3,
+                                    color: '#666',
+                                    dashArray: '',
+                                    fillOpacity: 0.7
+                                });
+                                if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+                                    layer.bringToFront();
+                                }
+                            },
+                            mouseout: function(e) {
+                                const layer = e.target;
+                                layer.setStyle({
+                                    weight: 1,
+                                    color: 'white',
+                                    fillOpacity: 0.7
+                                });
+                            }
+                        });
+                    }
+                }).bindTooltip(name)
+            })
+            .catch(err => {
+                console.error(`Error with ${cacheBustUrl}:`, err.message);
+                return null;
+            });
+    }
+
+    function loadState(state) {
+        // Remove current layers
+        Object.values(activeLayers).forEach(layer => {
+            if (layer && map.hasLayer(layer)) {
+                map.removeLayer(layer);
+            }
+        });
+
+        // Clear current layers
+        activeLayers = {};
+        availableLayers = {};
+
+        // Set the new map center
+        map.setView(stateCenters[state] || stateCenters.ma, 8);
+
+        // Layers control - remove if exists
+        if (map.layersControl) {
+            map.removeControl(map.layersControl);
+        }
+
+        // Update layer selector
+        const layerSelect = document.getElementById('level-select');
+        layerSelect.innerHTML = '';
+
+        // Load new layers
+        Promise.all([
+            createLayer(`${state}_tract_density.geojson`, 'Census Tracts'),
+            createLayer(`${state}_county_density.geojson`, 'Counties'),
+            createLayer(`${state}_town_density.geojson`, 'Towns')
+        ]).then(results => {
+            const tractLayer = results[0];
+            const countyLayer = results[1];
+            const townLayer = results[2];
+
+            if (tractLayer) {
+                activeLayers['tract'] = tractLayer;
+                availableLayers['tract'] = true;
+                layerSelect.appendChild(new Option('Census Tracts', 'tract'));
+            }
+
+            if (countyLayer) {
+                activeLayers['county'] = countyLayer;
+                availableLayers['county'] = true;
+                layerSelect.appendChild(new Option('Counties', 'county'));
+            }
+
+            if (townLayer) {
+                activeLayers['town'] = townLayer;
+                availableLayers['town'] = true;
+                layerSelect.appendChild(new Option('Towns', 'town'));
+            }
+
+            // Set initial active layer
+            let activeLayerType = 'town';
+            if (townLayer) {
+                townLayer.addTo(map);
+            } else if (countyLayer) {
+                countyLayer.addTo(map);
+                activeLayerType = 'county';
+            } else if (tractLayer) {
+                tractLayer.addTo(map);
+                activeLayerType = 'tract';
+            }
+
+            // Set the select value to match the active layer
+            layerSelect.value = activeLayerType;
+
+            // Add legend
+            addLegend();
+
+            // Load meeting data
+            loadMeetingData(state);
+        });
+    }
+
+    function addLegend() {
+        // Remove existing legend if any
+        if (map.legend) {
+            map.removeControl(map.legend);
+        }
+
+        // Create new legend
+        const legend = L.control({position: 'bottomright'});
+
+        legend.onAdd = function(map) {
+            const div = L.DomUtil.create('div', 'legend');
+            const grades = [0, 100, 200, 500, 1000, 2000, 5000, 10000];
+            const labels = [];
+
+            div.innerHTML = '<h4>Population Density</h4>' +
+                '<div>(people per km²)</div>';
+
+            // Loop through density intervals and generate a label with colored square for each
+            for (let i = 0; i < grades.length; i++) {
+                div.innerHTML +=
+                    '<i style="background:' + getColor(grades[i] + 1) + '"></i> ' +
+                    grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
+            }
+
+            return div;
+        };
+
+        legend.addTo(map);
+        map.legend = legend;
+    }
+
+    // Function to load meeting location data
+    function loadMeetingData(state) {
+        // Show loading indicator
+        const loadingIndicator = document.getElementById('loading-indicator');
+        loadingIndicator.classList.add('active');
+
+        // Clear existing meeting markers
+        if (meetingMarkers) {
+            map.removeLayer(meetingMarkers);
+            meetingMarkers = null;
+        }
+
+        // Remove meeting legend if exists
+        if (map.meetingLegend) {
+            map.removeControl(map.meetingLegend);
+        }
+
+        // Use the API to fetch meeting data for the selected state
+        const apiUrl = `https://aggregator.bmltenabled.org/main_server/client_interface/json/?switcher=GetSearchResults&meeting_key=location_province&meeting_key_value=${state.toUpperCase()}&data_field_key=meeting_name,longitude,latitude,location_province,location_municipality,location_sub_province`;
+
+        fetch(apiUrl)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Failed to load meeting data: ${response.status} ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Group meetings by location
+                const locationGroups = {};
+
+                // Process meeting data to group by coordinates
+                data.forEach(meeting => {
+                    // Skip invalid coordinates
+                    if (!meeting.longitude || !meeting.latitude) return;
+                    if (isNaN(parseFloat(meeting.longitude)) || isNaN(parseFloat(meeting.latitude))) return;
+
+                    const lat = parseFloat(meeting.latitude);
+                    const lng = parseFloat(meeting.longitude);
+
+                    // Skip coordinates that are clearly invalid
+                    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+
+                    // Create location key for grouping (truncate to 5 decimal places for proximity grouping)
+                    const locationKey = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+
+                    if (!locationGroups[locationKey]) {
+                        locationGroups[locationKey] = {
+                            lat,
+                            lng,
+                            meetings: [],
+                            municipality: meeting.location_municipality || 'Unknown',
+                            sub_province: meeting.location_sub_province || ''
+                        };
+                    }
+
+                    locationGroups[locationKey].meetings.push(meeting);
+                });
+
+                // Create a feature group for all markers
+                meetingMarkers = L.featureGroup();
+
+                // Track municipality counts
+                const meetingCounts = {};
+                let validMarkers = 0;
+
+                // Create markers with different colors based on meeting count
+                Object.values(locationGroups).forEach(location => {
+                    const meetingCount = location.meetings.length;
+                    validMarkers++;
+
+                    // Track municipality counts
+                    const municipality = location.municipality;
+                    if (!meetingCounts[municipality]) {
+                        meetingCounts[municipality] = 0;
+                    }
+                    meetingCounts[municipality] += meetingCount;
+
+                    // Use standard pin marker with custom color based on meeting count
+                    const markerColor = meetingCount > 1 ? 'red' : 'blue';
+                    const marker = L.marker([location.lat, location.lng], {
+                        icon: L.icon({
+                            iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${markerColor}.png`,
+                            shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+                            iconSize: [25, 41],
+                            iconAnchor: [12, 41],
+                            popupAnchor: [1, -34],
+                            shadowSize: [41, 41]
+                        })
+                    });
+
+                    // Create popup content with all meetings at this location
+                    let popupContent = `<strong>${location.municipality}, ${location.sub_province}</strong><br>`;
+                    popupContent += `<strong>${meetingCount} meeting${meetingCount > 1 ? 's' : ''} at this location:</strong><br>`;
+
+                    location.meetings.forEach((meeting, index) => {
+                        popupContent += `${index + 1}. ${meeting.meeting_name}<br>`;
+                    });
+
+                    marker.bindPopup(popupContent);
+
+                    // Add to feature group
+                    meetingMarkers.addLayer(marker);
+                });
+
+                // Add markers to map
+                map.addLayer(meetingMarkers);
+
+                // Add meeting legend
+                const meetingLegend = L.control({position: 'bottomleft'});
+
+                meetingLegend.onAdd = function(map) {
+                    const div = L.DomUtil.create('div', 'meeting-legend');
+                    div.innerHTML = '<h4>Meeting Counts</h4>' +
+                        '<img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png" width="15" height="24"> 1 meeting<br>' +
+                        '<img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png" width="15" height="24"> Multiple meetings<br>';
+                    return div;
+                };
+
+                meetingLegend.addTo(map);
+                map.meetingLegend = meetingLegend;
+
+                // Hide loading indicator
+                loadingIndicator.classList.remove('active');
+            })
+            .catch(error => {
+                console.error('Error loading meeting data:', error);
+                // Hide loading indicator and show error
+                loadingIndicator.classList.remove('active');
+            });
+    }
+
+    // Layer selector change handler
+    document.getElementById('level-select').addEventListener('change', function() {
+        const layerType = this.value;
+
+        // Hide all layers
+        Object.values(activeLayers).forEach(layer => {
+            if (map.hasLayer(layer)) {
+                map.removeLayer(layer);
+            }
+        });
+
+        // Show only the selected layer
+        if (activeLayers[layerType]) {
+            activeLayers[layerType].addTo(map);
+        }
+    });
+
+    // State selector change handler
+    document.getElementById('state-select').addEventListener('change', function() {
+        currentState = this.value;
+        loadState(currentState);
+    });
+
+    // Initial load
+    loadState(currentState);
+</script>
+</body>
+</html>
