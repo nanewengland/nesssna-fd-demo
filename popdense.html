@@ -184,6 +184,32 @@
     let availableLayers = {}; // Keep track of which layers are available for current state
     let meetingMarkers = null; // Store the meeting markers group
 
+    // Set initial state in dropdown
+    document.getElementById('state-select').value = currentState;
+
+    // Load initial state data
+    loadState(currentState);
+
+    // Add event listeners for state and level changes
+    document.getElementById('state-select').addEventListener('change', function(e) {
+        currentState = e.target.value;
+        loadState(currentState);
+    });
+
+    document.getElementById('level-select').addEventListener('change', function(e) {
+        const level = e.target.value;
+        if (activeLayers[level]) {
+            // Remove current active layer
+            Object.values(activeLayers).forEach(layer => {
+                if (layer && map.hasLayer(layer)) {
+                    map.removeLayer(layer);
+                }
+            });
+            // Add new active layer
+            activeLayers[level].addTo(map);
+        }
+    });
+
     function getColor(d) {
         return d > 10000 ? '#800026' :
             d > 5000  ? '#BD0026' :
@@ -298,9 +324,9 @@
 
         // Load new layers
         Promise.all([
-            createLayer(`${state}_tract_density.geojson`, 'Census Tracts'),
-            createLayer(`${state}_county_density.geojson`, 'Counties'),
-            createLayer(`${state}_town_density.geojson`, 'Towns')
+            createLayer(`geojson/${state}_tract_density.geojson`, 'Census Tracts'),
+            createLayer(`geojson/${state}_county_density.geojson`, 'Counties'),
+            createLayer(`geojson/${state}_town_density.geojson`, 'Towns')
         ]).then(results => {
             const tractLayer = results[0];
             const countyLayer = results[1];
@@ -509,33 +535,6 @@
                 loadingIndicator.classList.remove('active');
             });
     }
-
-    // Layer selector change handler
-    document.getElementById('level-select').addEventListener('change', function() {
-        const layerType = this.value;
-
-        // Hide all layers
-        Object.values(activeLayers).forEach(layer => {
-            if (map.hasLayer(layer)) {
-                map.removeLayer(layer);
-            }
-        });
-
-        // Show only the selected layer
-        if (activeLayers[layerType]) {
-            activeLayers[layerType].addTo(map);
-        }
-    });
-
-    // State selector change handler
-    document.getElementById('state-select').addEventListener('change', function() {
-        currentState = this.value;
-        loadState(currentState);
-    });
-
-    document.getElementById('state-select').value = 'ma';
-    currentState = 'ma';
-    loadState(currentState);
 </script>
 </body>
 </html>
