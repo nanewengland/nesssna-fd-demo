@@ -119,6 +119,22 @@
       box-shadow: 0 2px 4px rgba(0,0,0,0.2);
       z-index: 1000;
       display: none;
+      text-align: center;
+    }
+    .loading-indicator:before {
+      content: "";
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      margin-right: 10px;
+      border: 3px solid rgba(0, 0, 0, 0.3);
+      border-radius: 50%;
+      border-top-color: #000;
+      animation: spin 1s ease-in-out infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
     .loading-indicator.active {
       display: block;
@@ -439,6 +455,11 @@
   }
 
   function loadState(state) {
+    // Show loading indicator
+    const loadingIndicator = document.getElementById('loading-indicator');
+    loadingIndicator.classList.add('active');
+    loadingIndicator.textContent = "Loading map data...";
+    
     // Remove current layers
     Object.values(activeLayers).forEach(layer => {
       if (layer && map.hasLayer(layer)) {
@@ -508,8 +529,16 @@
       // Add legend
       addLegend();
       
+      // Hide the loading indicator when map data is loaded
+      loadingIndicator.classList.remove('active');
+      
       // Load meeting data
       loadMeetingData(state);
+    })
+    .catch(error => {
+      console.error("Error loading map data:", error);
+      loadingIndicator.textContent = "Error loading map data";
+      setTimeout(() => loadingIndicator.classList.remove('active'), 3000);
     });
   }
   
@@ -549,6 +578,7 @@
     // Show loading indicator
     const loadingIndicator = document.getElementById('loading-indicator');
     loadingIndicator.classList.add('active');
+    loadingIndicator.textContent = "Loading meeting locations...";
     
     // Clear existing meeting markers
     if (meetingMarkers) {
@@ -672,7 +702,8 @@
       .catch(error => {
         console.error('Error loading meeting data:', error);
         // Hide loading indicator and show error
-        loadingIndicator.classList.remove('active');
+        loadingIndicator.textContent = "Error loading meeting data";
+        setTimeout(() => loadingIndicator.classList.remove('active'), 3000);
       });
   }
 </script>
