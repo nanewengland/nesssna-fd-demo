@@ -151,7 +151,7 @@
       <option value="la">Louisiana</option>
       <option value="me">Maine</option>
       <option value="md">Maryland</option>
-      <option value="ma" selected>Massachusetts</option>
+      <option value="ma">Massachusetts</option>
       <option value="mi">Michigan</option>
       <option value="mn">Minnesota</option>
       <option value="ms">Mississippi</option>
@@ -168,7 +168,7 @@
       <option value="oh">Ohio</option>
       <option value="ok">Oklahoma</option>
       <option value="or">Oregon</option>
-      <option value="pa">Pennsylvania</option>
+      <option value="pa" selected>Pennsylvania</option>
       <option value="ri">Rhode Island</option>
       <option value="sc">South Carolina</option>
       <option value="sd">South Dakota</option>
@@ -194,7 +194,7 @@
 </div>
 
 <div id="map"></div>
-<div id="loading-indicator" class="loading-indicator">Loading meeting locations...</div>
+<div id="loading-indicator" class="loading-indicator">Loading data...</div>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
 <script>
@@ -253,7 +253,7 @@
     wy: [42.9957, -107.5512]
   };
   
-  let currentState = 'ma';
+  let currentState = 'pa';
   let map = L.map('map').setView(stateCenters[currentState], 8);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
   
@@ -265,11 +265,73 @@
   // Set initial state in dropdown
   document.getElementById('state-select').value = currentState;
   
-  // Load initial state data
-  loadState(currentState);
+  // Try to get user's location first
+  function initWithGeolocation() {
+    if (navigator.geolocation) {
+      console.log("Attempting to get user location...");
+      
+      // Don't show any special message for geolocation
+      const loadingIndicator = document.getElementById('loading-indicator');
+      loadingIndicator.classList.remove('active');
+      
+      navigator.geolocation.getCurrentPosition(
+        // Success callback
+        function(position) {
+          console.log("Got user location:", position.coords.latitude, position.coords.longitude);
+          
+          // Find which state contains this point
+          const userLat = position.coords.latitude;
+          const userLng = position.coords.longitude;
+          
+          // Find the closest state center by distance
+          let closestState = 'pa'; // Default fallback
+          let minDistance = Number.MAX_VALUE;
+          
+          Object.entries(stateCenters).forEach(([stateCode, center]) => {
+            const distance = Math.sqrt(
+              Math.pow(center[0] - userLat, 2) + 
+              Math.pow(center[1] - userLng, 2)
+            );
+            
+            if (distance < minDistance) {
+              minDistance = distance;
+              closestState = stateCode;
+            }
+          });
+          
+          console.log("Detected state:", closestState);
+          currentState = closestState;
+          document.getElementById('state-select').value = currentState;
+          loadState(currentState);
+        },
+        // Error callback
+        function(error) {
+          console.warn("Geolocation error:", error.message);
+          loadState(currentState); // Fall back to default state
+        },
+        // Options
+        {
+          enableHighAccuracy: false,
+          timeout: 5000,
+          maximumAge: 0
+        }
+      );
+    } else {
+      // Geolocation not supported, use default
+      console.log("Geolocation not supported by browser");
+      loadState(currentState);
+    }
+  }
+  
+  // Start with geolocation
+  initWithGeolocation();
   
   // Add event listeners for state and level changes
   document.getElementById('state-select').addEventListener('change', function(e) {
+    // Hide the location detection message when manually selecting a state
+    const loadingIndicator = document.getElementById('loading-indicator');
+    loadingIndicator.classList.remove('active');
+    
     currentState = e.target.value;
     loadState(currentState);
   });
