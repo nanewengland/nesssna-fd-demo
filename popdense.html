@@ -387,6 +387,26 @@
     };
   }
 
+  // Reverse geocoding with Nominatim
+  async function reverseGeocode(lat, lng) {
+    // Respect Nominatim usage policy with a reasonable timeout
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14&addressdetails=1`;
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'PopulationDensityViewer/1.0'
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Nominatim API returned ${response.status}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Reverse geocoding failed:', error);
+      return null;
+    }
+  }
+
   function createLayer(url, name) {
     // Add cache-busting parameter
     const cacheBustUrl = `${url}?_=${new Date().getTime()}`;
@@ -420,7 +440,62 @@
             // Add population and density
             popupContent += `<strong>Population:</strong> ${pop}<br><strong>Density:</strong> ${density} ppl/km²`;
             
-            layer.bindPopup(popupContent);
+            // Create a popup with loading capability
+            const popup = L.popup({
+              maxWidth: 300
+            });
+            
+            // Bind popup to layer
+            layer.bindPopup(popup);
+            
+            // When layer is clicked
+            layer.on('click', async function(e) {
+              // First show the basic popup
+              popup.setContent(popupContent);
+              
+              // If this is a census tract or county without town info, get location info
+              if (name.includes('Tract') || (name.includes('Count') && !feature.properties.TOWN)) {
+                // Update popup with loading message
+                popup.setContent(popupContent + '<br><br><em>Loading location data...</em>');
+                popup.update();
+                
+                // Get center point for geocoding
+                const center = e.latlng;
+                
+                // Do reverse geocoding
+                const geoData = await reverseGeocode(center.lat, center.lng);
+                
+                if (geoData && geoData.address) {
+                  const addr = geoData.address;
+                  let locationInfo = '<hr><strong>Location:</strong><br>';
+                  
+                  // Build location string from most to least specific
+                  const parts = [];
+                  
+                  // Add components in order of specificity
+                  if (addr.hamlet) parts.push(addr.hamlet);
+                  if (addr.village) parts.push(addr.village);
+                  if (addr.suburb) parts.push(addr.suburb);
+                  if (addr.town) parts.push(addr.town);
+                  if (addr.city) parts.push(addr.city);
+                  if (addr.county) parts.push(addr.county);
+                  if (addr.state) parts.push(addr.state);
+                  
+                  if (parts.length > 0) {
+                    locationInfo += parts.join(', ');
+                    popup.setContent(popupContent + locationInfo);
+                  } else {
+                    popup.setContent(popupContent + '<hr><em>Location information not available</em>');
+                  }
+                  
+                  popup.update();
+                } else {
+                  // If geocoding failed
+                  popup.setContent(popupContent + '<hr><em>Could not retrieve location information</em>');
+                  popup.update();
+                }
+              }
+            });
             
             // Add hover effect
             layer.on({
