@@ -207,6 +207,11 @@
       <option value="town">Town</option>
     </select>
   </div>
+  <div class="control-group">
+    <label>
+      <input type="checkbox" id="aa-meetings-toggle"> Show AA Meetings
+    </label>
+  </div>
 </div>
 
 <div id="map"></div>
@@ -279,6 +284,7 @@
   let activeLayers = {};
   let availableLayers = {}; // Keep track of which layers are available for current state
   let meetingMarkers = null; // Store the meeting markers group
+  let aaMeetingMarkers = null; // Store the AA meeting markers group
   
   // Set initial state in dropdown
   document.getElementById('state-select').value = currentState;
@@ -350,6 +356,20 @@
     const loadingIndicator = document.getElementById('loading-indicator');
     loadingIndicator.classList.remove('active');
     
+    // Uncheck AA meetings checkbox
+    const aaCheckbox = document.getElementById('aa-meetings-toggle');
+    if (aaCheckbox.checked) {
+      aaCheckbox.checked = false;
+      // Remove AA meeting markers if they exist
+      if (aaMeetingMarkers) {
+        map.removeLayer(aaMeetingMarkers);
+        aaMeetingMarkers = null;
+      }
+      if (map.aaMeetingLegend) {
+        map.removeControl(map.aaMeetingLegend);
+      }
+    }
+    
     currentState = e.target.value;
     loadState(currentState);
   });
@@ -367,7 +387,22 @@
       activeLayers[level].addTo(map);
     }
   });
-  
+
+  // Add event listener for AA meetings toggle
+  document.getElementById('aa-meetings-toggle').addEventListener('change', function(e) {
+    if (e.target.checked) {
+      loadAAMeetingData();
+    } else {
+      if (aaMeetingMarkers) {
+        map.removeLayer(aaMeetingMarkers);
+        aaMeetingMarkers = null;
+      }
+      if (map.aaMeetingLegend) {
+        map.removeControl(map.aaMeetingLegend);
+      }
+    }
+  });
+
   function getColor(d) {
     return d > 10000 ? '#800026' :
            d > 5000  ? '#BD0026' :
@@ -767,7 +802,7 @@
         
         meetingLegend.onAdd = function(map) {
           const div = L.DomUtil.create('div', 'meeting-legend');
-          div.innerHTML = '<h4>Meeting Counts</h4>' +
+          div.innerHTML = '<h4>NA Meeting Counts</h4>' +
             '<img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png" width="15" height="24"> 1 meeting<br>' +
             '<img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png" width="15" height="24"> Multiple meetings<br>';
           return div;
@@ -787,27 +822,107 @@
       });
   }
 
-  // Use a map tile layer with more prominent labels
+
+  function loadAAMeetingData() {
+    const loadingIndicator = document.getElementById('loading-indicator');
+    loadingIndicator.classList.add('active');
+    loadingIndicator.textContent = "Loading AA meeting locations...";
+
+    if (aaMeetingMarkers) {
+      map.removeLayer(aaMeetingMarkers);
+      aaMeetingMarkers = null;
+    }
+
+    if (map.aaMeetingLegend) {
+      map.removeControl(map.aaMeetingLegend);
+    }
+
+    const center = map.getCenter();
+    const serverUrl = `https://api.meetingguide.org/app/v2/request?latitude=${center.lat}&longitude=${center.lng}&search=&radius=300&language=en&key=gPjHLUKZj%3fXMdQ2PvDyaUFXXXTD%3fJAhB`;
+    const apiUrl = `https://corsproxy.aws.bmlt.app/?url=${encodeURIComponent(serverUrl)}`;
+
+    fetch(apiUrl)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Failed to load AA meeting data: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        aaMeetingMarkers = L.featureGroup();
+
+        if (data.meetings && Array.isArray(data.meetings)) {
+          const currentState = document.getElementById('state-select').value.toUpperCase();
+          const filteredMeetings = data.meetings.filter(meeting => 
+            meeting.state && meeting.state.toUpperCase() === currentState
+          );
+
+          console.log(`Found ${filteredMeetings.length} meetings in ${currentState}`);
+
+          filteredMeetings.forEach(meeting => {
+            if (meeting.latitude && meeting.longitude) {
+              const marker = L.marker([meeting.latitude, meeting.longitude], {
+                icon: L.icon({
+                  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+                  shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+                  iconSize: [25, 41],
+                  iconAnchor: [12, 41],
+                  popupAnchor: [1, -34],
+                  shadowSize: [41, 41]
+                })
+              });
+
+              let popupContent = `<strong>${meeting.name || 'AA Meeting'}</strong><br>`;
+              if (meeting.time) popupContent += `Time: ${meeting.time}<br>`;
+              if (meeting.day) popupContent += `Day: ${meeting.day}<br>`;
+              if (meeting.address) popupContent += `Address: ${meeting.address}<br>`;
+              if (meeting.notes) popupContent += `Notes: ${meeting.notes}<br>`;
+
+              marker.bindPopup(popupContent);
+              aaMeetingMarkers.addLayer(marker);
+            }
+          });
+        }
+
+        map.addLayer(aaMeetingMarkers);
+
+        const aaMeetingLegend = L.control({position: 'bottomleft'});
+        
+        aaMeetingLegend.onAdd = function(map) {
+          const div = L.DomUtil.create('div', 'meeting-legend');
+          div.innerHTML = '<h4>AA Meetings</h4>' +
+            '<img src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png" width="15" height="24"> AA Meeting<br>';
+          return div;
+        };
+        
+        aaMeetingLegend.addTo(map);
+        map.aaMeetingLegend = aaMeetingLegend;
+        loadingIndicator.classList.remove('active');
+      })
+      .catch(error => {
+        console.error('Error loading AA meeting data:', error);
+        loadingIndicator.textContent = "Error loading AA meeting data";
+        setTimeout(() => loadingIndicator.classList.remove('active'), 3000);
+      });
+  }
+
   function initMap() {
-    // Remove previous base layer if it exists
     if (map.baseLayer) {
       map.removeLayer(map.baseLayer);
     }
-    
-    // Add a base map with more prominent labels
+
     const baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     });
     baseLayer.addTo(map);
     map.baseLayer = baseLayer;
-    
-    // Add a label-only layer that sits on top of the data layers
+
     const labelsLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       subdomains: 'abcd',
       maxZoom: 19,
-      pane: 'shadowPane'  // Make sure it's in a pane that's above the other layers
+      pane: 'shadowPane'
     });
     labelsLayer.addTo(map);
     map.labelsLayer = labelsLayer;
